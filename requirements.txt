@@ -1,0 +1,6 @@
+requests>=2.31.0
+tenacity>=8.2.3
+tqdm>=4.66.1
+orjson>=3.9.10
+python-dotenv>=1.0.1
+
