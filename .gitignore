@@ -1,0 +1,47 @@
+# Model outputs and checkpoints
+lora/output/
+output/
+checkpoints/
+*.bin
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environments
+.env
+.venv/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Hugging Face cache
+.cache/
+~/.cache/huggingface/
+
+# Logs
+*.log
+logs/
+wandb/
+
+# Large data files (optional - uncomment if needed)
+# *.jsonl
+
