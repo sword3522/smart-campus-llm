@@ -1,6 +1,23 @@
+# 基础依赖
 requests>=2.31.0
 tenacity>=8.2.3
 tqdm>=4.66.1
 orjson>=3.9.10
 python-dotenv>=1.0.1
 
+# 爬虫
+beautifulsoup4>=4.12.0
+
+# Web API
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.5.0
+
+# 定时任务
+apscheduler>=3.10.0
+
+# 模型推理 (如果还没安装)
+transformers>=4.36.0
+torch>=2.0.0
+peft>=0.7.0
+accelerate>=0.25.0
