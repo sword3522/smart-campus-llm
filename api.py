@@ -14,8 +14,10 @@ import os
 from datetime import datetime, timedelta
 from typing import Optional, Literal, List
 
-from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 # 添加项目路径
@@ -47,6 +49,7 @@ class ReportResponse(BaseModel):
     """日报响应"""
     date: str
     news_count: Optional[int] = None
+    effective_news_count: Optional[int] = None # 新增字段
     student_summary: Optional[str] = None
     teacher_summary: Optional[str] = None
     generated_at: Optional[str] = None
@@ -102,18 +105,9 @@ app.add_middleware(
 
 @app.get("/", tags=["基础"])
 async def root():
-    """API 根路径，返回欢迎信息"""
-    return {
-        "message": "欢迎使用智慧校园助手 API",
-        "version": "1.0.0",
-        "docs": "/docs",
-        "endpoints": {
-            "问答": "POST /ask",
-            "获取日报": "GET /report",
-            "日报列表": "GET /reports",
-            "触发每日任务": "POST /daily-job"
-        }
-    }
+    """返回 Web 界面"""
+    index_path = os.path.join(os.path.dirname(__file__), "web/index.html")
+    return FileResponse(index_path)
 
 
 @app.get("/health", tags=["基础"])
@@ -192,10 +186,19 @@ async def get_report(
     
     # 根据身份返回对应的摘要
     summary_key = "student_summary" if identity == "student" else "teacher_summary"
+    effective_count_key = "student_effective_count" if identity == "student" else "teacher_effective_count"
+    
+    # 如果日报中没有存储有效新闻数量，尝试从摘要中实时计算
+    # 这对于代码更新前生成的但格式已符合 Markdown 要求的日报有效
+    effective_count = report.get(effective_count_key)
+    if effective_count is None:
+        summary_text = report.get(summary_key, "")
+        effective_count = summary_text.count("### ")
     
     return ReportResponse(
         date=report.get("date", date),
         news_count=report.get("news_count"),
+        effective_news_count=effective_count,
         student_summary=report.get("student_summary") if identity == "student" else None,
         teacher_summary=report.get("teacher_summary") if identity == "teacher" else None,
         generated_at=report.get("generated_at")
@@ -222,11 +225,81 @@ async def get_full_report(
     if report is None:
         raise HTTPException(status_code=404, detail=f"未找到 {date} 的日报")
     
+    # 同样为完整日报补充实时计算逻辑
+    student_eff = report.get("student_effective_count")
+    if student_eff is None:
+        student_eff = report.get("student_summary", "").count("### ")
+        
+    teacher_eff = report.get("teacher_effective_count")
+    if teacher_eff is None:
+        teacher_eff = report.get("teacher_summary", "").count("### ")
+    
     return ReportResponse(
         date=report.get("date", date),
         news_count=report.get("news_count"),
+        # 这里 full 接口并没有定义 separate effective counts for student/teacher in the response model explicitly 
+        # based on previous tool outputs, ReportResponse has effective_news_count (single int).
+        # But wait, get_full_report returns ReportResponse which has ONE effective_news_count.
+        # Usually full report might need structure adjustment if we want both.
+        # But looking at previous definition of ReportResponse:
+        # effective_news_count: Optional[int] = None
+        # It seems ambiguous which one it refers to in 'full' mode. 
+        # Let's just sum them or return student's for now to match the model, 
+        # or maybe the user doesn't use full report for the specific UI card.
+        # The UI uses /report endpoint usually.
+        # For safety, let's just use student count or sum, but standard use is /report with identity.
+        effective_news_count=student_eff, # Defaulting to student count for general stat
         student_summary=report.get("student_summary"),
         teacher_summary=report.get("teacher_summary"),
+        generated_at=report.get("generated_at")
+    )
+
+
+@app.get("/report/weekly", response_model=ReportResponse, tags=["日报"])
+async def get_weekly_report(
+    date: Optional[str] = Query(
+        None, 
+        description="结束日期 (YYYY-MM-DD)，默认为今天",
+        example="2025-11-27"
+    ),
+    identity: Literal["student", "teacher"] = Query(
+        "student",
+        description="用户身份，决定返回学生版还是教师版"
+    )
+):
+    """
+    获取指定日期这一周的周报（过去7天汇总）
+    
+    如果周报数据不存在，会尝试现场生成。
+    """
+    if date is None:
+        date = datetime.now().strftime('%Y-%m-%d')
+    
+    service = DailyJobService()
+    
+    # 现场生成周报
+    report = service.generate_weekly_report(end_date_str=date)
+    
+    if report.get("news_count", 0) == 0 and report.get("student_summary") == "本周无重要新闻通知。":
+         # 虽然是正常返回，但对于前端来说可能希望是一个友好的提示
+         # 不过 api 层面我们还是返回 200，让前端处理展示
+         pass
+
+    # 返回格式化响应
+    # 将日期字段显示为范围 "start ~ end"
+    display_date = f"{report['start_date']} ~ {report['end_date']}"
+    
+    effective_count = report.get("student_effective_count") if identity == "student" else report.get("teacher_effective_count")
+    if effective_count is None:
+        summary = report.get("student_summary") if identity == "student" else report.get("teacher_summary")
+        effective_count = (summary or "").count("### ")
+
+    return ReportResponse(
+        date=display_date,
+        news_count=report.get("news_count"),
+        effective_news_count=effective_count,
+        student_summary=report.get("student_summary") if identity == "student" else None,
+        teacher_summary=report.get("teacher_summary") if identity == "teacher" else None,
         generated_at=report.get("generated_at")
     )
 
@@ -263,24 +336,31 @@ async def get_recent_reports(
 
 
 @app.post("/daily-job", response_model=DailyJobResponse, tags=["管理"])
-async def trigger_daily_job(background_tasks: BackgroundTasks):
+async def trigger_daily_job(
+    background_tasks: BackgroundTasks,
+    date: Optional[str] = Query(None, description="指定日期，可以是 'today' 或 YYYY-MM-DD")
+):
     """
     手动触发每日任务
     
     执行以下操作：
-    1. 爬取昨天的新闻
+    1. 爬取新闻（默认昨天，如果 date='today' 则爬取今天）
     2. 生成日报总结（学生版 + 教师版）
     
     **注意**: 任务在后台执行，可能需要几分钟完成。
     """
     try:
         service = DailyJobService()
-        result = service.run_daily_job()
+        # 如果是 'today'，直接同步执行以便即时反馈（或者也可以用 background_tasks，但前端需要轮询）
+        # 为了前端体验，对于单日生成我们这里选择同步等待结果，
+        # 如果爬取时间过长可能会超时，生产环境建议用 WebSocket 或轮询。
+        # 考虑到 demo 演示，直接同步调用。
+        result = service.run_daily_job(target_date=date)
         
         if result["status"] == "no_news":
             return DailyJobResponse(
                 status="no_news",
-                message="昨天没有新闻，跳过日报生成",
+                message=f"{date or '昨天'}没有新闻，跳过日报生成",
                 news_count=0
             )
         
@@ -313,6 +393,27 @@ async def get_history_briefs(
         "identity": identity,
         "briefs": briefs
     }
+
+
+# 静态文件路由
+web_dir = os.path.join(os.path.dirname(__file__), "web")
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """避免浏览器请求 favicon.ico 时报错"""
+    return Response(status_code=204)
+
+@app.get("/style.css", tags=["静态资源"])
+async def get_css():
+    """返回CSS样式文件"""
+    css_path = os.path.join(web_dir, "style.css")
+    return FileResponse(css_path, media_type="text/css")
+
+@app.get("/main.js", tags=["静态资源"])
+async def get_js():
+    """返回JavaScript文件"""
+    js_path = os.path.join(web_dir, "main.js")
+    return FileResponse(js_path, media_type="application/javascript")
 
 
 # ============ 启动入口 ============

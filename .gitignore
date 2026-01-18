@@ -45,3 +45,5 @@ wandb/
 # Large data files (optional - uncomment if needed)
 # *.jsonl
 
+daily_reports/
+grab_news/news_days/

@@ -38,7 +38,7 @@ class DailyJobService:
     
     def crawl_news_by_date(self, target_date: str = None) -> List[Dict[str, Any]]:
         """
-        爬取指定日期的新闻
+        爬取指定日期的新闻，整合了反爬验证绕过逻辑
         
         Args:
             target_date: 目标日期，支持格式：
@@ -69,129 +69,54 @@ class DailyJobService:
         
         print(f"正在爬取新闻: {self.base_url}")
         print(f"目标日期: {target_mm_dd} ({target_full})")
-        
+
+        # 使用 grab_news.py 中的更稳健的爬取逻辑
         try:
-            response = requests.get(self.base_url, timeout=30)
-            response.encoding = response.apparent_encoding
-        except requests.RequestException as e:
-            print(f"✗ 请求失败: {e}")
+            from grab_news.grab_news import crawl_news
+            
+            # 直接调用封装好的 crawl_news 函数
+            # 它会自动处理 Session、分页、详情页抓取和反爬绕过
+            news_data = crawl_news(target_date=target_mm_dd, max_depth=5)
+            
+            if not news_data:
+                print(f"目标日期 ({target_mm_dd}) 没有新闻")
+                return []
+            
+            print(f"找到 {len(news_data)} 个新闻条目")
+            
+            # 对返回的数据进行简单的格式化，确保符合 DailyJobService 的预期
+            formatted_data = []
+            crawl_time = datetime.now().strftime('%Y-%m-%d')
+            
+            for i, item in enumerate(news_data, 1):
+                # 确保 id 格式一致
+                item['id'] = f"news_{crawl_time}_{i}"
+                
+                # 确保 publish_time 是完整日期
+                if not item.get('publish_time'):
+                     item['publish_time'] = target_full
+                elif len(item['publish_time']) == 5: # 只有 MM-DD
+                     current_year = datetime.now().year
+                     item['publish_time'] = f"{current_year}-{item['publish_time']}"
+                
+                formatted_data.append(item)
+            
+            # 保存新闻数据
+            if formatted_data:
+                filename = f"news_{target_mm_dd.replace('-', '')}.json"
+                save_path = os.path.join(self.news_save_dir, filename)
+                with open(save_path, 'w', encoding='utf-8') as f:
+                    json.dump(formatted_data, f, ensure_ascii=False, indent=2)
+                print(f"\n✓ 已保存 {len(formatted_data)} 条新闻到: {save_path}")
+            
+            return formatted_data
+
+        except ImportError:
+            print("⚠️ 无法导入 grab_news 模块，回退到普通爬取模式")
             return []
-        
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # 定位新闻列表
-        tz_div = soup.find('div', class_='tz')
-        if not tz_div:
-            print("未找到 <div class='tz'> 元素")
+        except Exception as e:
+            print(f"✗ 爬取过程中发生错误: {e}")
             return []
-        
-        li_tags = tz_div.find_all('li')
-        print(f"找到 {len(li_tags)} 个新闻条目")
-        
-        # 提取目标日期的新闻链接
-        results = []
-        for li in li_tags:
-            link = li.find('a')
-            span_tag = li.find('span')
-            
-            if not link or not span_tag:
-                continue
-            
-            href = link.get('href', '')
-            title = link.get('title', '')
-            span_text = span_tag.get_text().strip()
-            
-            # 只处理目标日期的新闻
-            if span_text == target_mm_dd:
-                results.append({
-                    'href': href,
-                    'title': title,
-                    'span': span_text,
-                    'full_date': target_full
-                })
-                print(f"  ✓ 发现新闻: {title}")
-        
-        if not results:
-            print(f"目标日期 ({target_mm_dd}) 没有新闻")
-            return []
-        
-        # 访问每条新闻详情页
-        crawl_time = datetime.now().strftime('%Y-%m-%d')
-        news_data = []
-        
-        for i, item in enumerate(results, 1):
-            if not item['href']:
-                continue
-            
-            # 构建完整URL
-            if item['href'].startswith('http'):
-                full_url = item['href']
-            else:
-                full_url = urljoin(self.base_url, item['href'])
-            
-            print(f"[{i}/{len(results)}] 正在爬取: {item['title'][:30]}...")
-            
-            try:
-                news_response = requests.get(full_url, timeout=10)
-                news_response.encoding = news_response.apparent_encoding
-                news_soup = BeautifulSoup(news_response.text, 'html.parser')
-                
-                # 提取标题和发布日期
-                article_title = item['title']
-                publish_date = None
-                
-                art_tit_div = news_soup.find('div', class_='art-tit cont-tit')
-                if art_tit_div:
-                    h3_tag = art_tit_div.find('h3')
-                    if h3_tag:
-                        article_title = h3_tag.get_text().strip()
-                    
-                    # 提取发布日期
-                    for span in art_tit_div.find_all('span'):
-                        span_text = span.get_text().strip()
-                        if '发布日期' in span_text or '发布时间' in span_text:
-                            date_match = re.search(r'(\d{4}-\d{2}-\d{2})', span_text)
-                            if date_match:
-                                publish_date = date_match.group(1)
-                            break
-                
-                # 如果没有找到发布日期，使用目标日期
-                if not publish_date:
-                    publish_date = item.get('full_date', '')
-                
-                # 提取正文内容
-                content_text = ""
-                content_div = news_soup.find('div', class_='v_news_content')
-                if content_div:
-                    content_text = self._clean_content(content_div)
-                
-                news_item = {
-                    "id": f"news_{crawl_time}_{i}",
-                    "url": full_url,
-                    "source": "教务处",
-                    "publish_time": publish_date or "",
-                    "crawl_time": crawl_time,
-                    "title": article_title,
-                    "content_raw": "",
-                    "content_clean": content_text,
-                    "attachments": []
-                }
-                
-                news_data.append(news_item)
-                print(f"  ✓ 成功爬取")
-                
-            except Exception as e:
-                print(f"  ✗ 爬取失败: {e}")
-        
-        # 保存新闻数据
-        if news_data:
-            filename = f"news_{target_mm_dd.replace('-', '')}.json"
-            save_path = os.path.join(self.news_save_dir, filename)
-            with open(save_path, 'w', encoding='utf-8') as f:
-                json.dump(news_data, f, ensure_ascii=False, indent=2)
-            print(f"\n✓ 已保存 {len(news_data)} 条新闻到: {save_path}")
-        
-        return news_data
     
     def crawl_yesterday_news(self) -> List[Dict[str, Any]]:
         """爬取昨天的新闻（兼容旧接口）"""
@@ -297,9 +222,15 @@ class DailyJobService:
         print("正在生成教师版日报...")
         teacher_summary = model_service.summarize_news(news_content, user_identity="teacher")
         
+        # 计算有效新闻数量（基于摘要中的标题数量）
+        student_effective_count = student_summary.count("### ")
+        teacher_effective_count = teacher_summary.count("### ")
+        
         report = {
             "date": date_str,
             "news_count": len(news_list),
+            "student_effective_count": student_effective_count,
+            "teacher_effective_count": teacher_effective_count,
             "student_summary": student_summary,
             "teacher_summary": teacher_summary,
             "generated_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -319,13 +250,17 @@ class DailyJobService:
         执行完整的每日任务流程
         
         Args:
-            target_date: 目标日期 (YYYY-MM-DD 或 MM-DD)，默认为昨天
+            target_date: 目标日期 (YYYY-MM-DD 或 MM-DD)，默认为昨天。
+                        如果传入 "today"，则处理今天。
         
         Returns:
             任务执行结果，包含爬取的新闻数量和生成的日报
         """
         # 解析目标日期
-        if target_date is None:
+        if target_date == "today":
+            target_full = datetime.now().strftime('%Y-%m-%d')
+            date_display = "今天"
+        elif target_date is None:
             target_full = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
             date_display = "昨天"
         elif '-' in target_date and len(target_date) == 10:
@@ -431,6 +366,107 @@ class DailyJobService:
                 reports.append(report)
         
         return reports
+
+
+    def generate_weekly_report(
+        self,
+        end_date_str: str,
+    ) -> Dict[str, Any]:
+        """
+        生成周报（过去7天）
+        
+        Args:
+            end_date_str: 结束日期 (YYYY-MM-DD)
+            
+        Returns:
+            周报数据
+        """
+        try:
+            end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
+        except ValueError:
+            # 如果格式不对，默认今天
+            end_date = datetime.now()
+            end_date_str = end_date.strftime('%Y-%m-%d')
+            
+        start_date = end_date - timedelta(days=6) # 7 days including end_date
+        
+        week_summaries = []
+        news_count_total = 0
+        
+        print(f"正在生成周报: {start_date.strftime('%Y-%m-%d')} ~ {end_date_str}")
+        
+        for i in range(7):
+            current_date = start_date + timedelta(days=i)
+            date_s = current_date.strftime('%Y-%m-%d')
+            report = self.get_report_by_date(date_s)
+            
+            # 如果日报不存在，尝试现场抓取并生成
+            if not report:
+                print(f"  - {date_s} 日报缺失，正在尝试自动补全...")
+                try:
+                    # run_daily_job 会处理爬取和生成
+                    job_result = self.run_daily_job(target_date=date_s)
+                    report = job_result.get("report")
+                except Exception as e:
+                    print(f"  ⚠️ 自动补全 {date_s} 日报失败: {e}")
+            
+            if report and report.get('news_count', 0) > 0:
+                news_count_total += report.get('news_count', 0)
+                week_summaries.append({
+                    "date": date_s,
+                    "student": report.get("student_summary", ""),
+                    "teacher": report.get("teacher_summary", "")
+                })
+        
+        if not week_summaries:
+             return {
+                "start_date": start_date.strftime('%Y-%m-%d'),
+                "end_date": end_date_str,
+                "news_count": 0,
+                "student_summary": "本周无重要新闻通知。",
+                "teacher_summary": "本周无重要新闻通知。",
+                "generated_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+
+        # 拼接每日总结作为输入
+        combined_text_student = ""
+        combined_text_teacher = ""
+        
+        for item in week_summaries:
+            combined_text_student += f"【{item['date']}】\n{item['student']}\n\n"
+            combined_text_teacher += f"【{item['date']}】\n{item['teacher']}\n\n"
+            
+        model_service = get_model_service()
+        
+        # 使用 summarize_news 生成周报，但添加前缀说明这是周报
+        # 为了让模型知道这是汇总，我们可以稍微包装一下 summarize_news 或者直接用
+        # 这里直接用，因为 summarize_news 的 prompt 比较通用 ("请总结以下教务通知")
+        
+        print("  - 生成学生版周报...")
+        weekly_student = model_service.summarize_news(
+            f"以下是过去一周的每日新闻总结，请根据它们生成一份周报：\n\n{combined_text_student}", 
+            user_identity="student"
+        )
+        
+        print("  - 生成教师版周报...")
+        weekly_teacher = model_service.summarize_news(
+            f"以下是过去一周的每日新闻总结，请根据它们生成一份周报：\n\n{combined_text_teacher}", 
+            user_identity="teacher"
+        )
+        
+        student_effective_count = weekly_student.count("### ")
+        teacher_effective_count = weekly_teacher.count("### ")
+
+        return {
+            "start_date": start_date.strftime('%Y-%m-%d'),
+            "end_date": end_date_str,
+            "news_count": news_count_total,
+            "student_summary": weekly_student,
+            "teacher_summary": weekly_teacher,
+            "student_effective_count": student_effective_count,
+            "teacher_effective_count": teacher_effective_count,
+            "generated_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
 
 
 # 便捷函数

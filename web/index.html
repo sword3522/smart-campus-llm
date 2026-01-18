@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>智慧校园助手</title>
+    <link rel="stylesheet" href="style.css?v=3">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+<div class="background-gradient"></div>
+<div class="container">
+    <!-- 头部 -->
+    <header class="header">
+        <div class="header-left">
+            <!-- <i class="fas fa-graduation-cap header-icon"></i> -->
+            <div class="header-titles">
+                <h1>🚀校园消息管理助手</h1>
+                <p class="subtitle">智能问答 · 每日资讯</p>
+            </div>
+        </div>
+        <div class="header-right">
+            <div class="identity-group global-identity-box">
+                <label for="global-identity" class="global-label">
+                    <i class="fas fa-user-circle"></i> 当前身份：
+                </label>
+                <select id="global-identity" class="global-select">
+                    <option value="student">👨‍🎓 学生</option>
+                    <option value="teacher">👨‍🏫 教师</option>
+                </select>
+            </div>
+        </div>
+    </header>
+
+    <!-- 主要内容区域：横向布局 -->
+    <div class="main-content">
+        <!-- 左侧：智能问答 (30%) -->
+        <section class="section qa-section qa-panel">
+            <div class="section-header">
+                <i class="fas fa-comments section-icon"></i>
+                <h2>智能问答</h2>
+                <button onclick="clearChatHistory()" class="btn-clear" title="清空历史">
+                    <i class="fas fa-trash-alt"></i>
+                </button>
+            </div>
+
+            <!-- 问答上下文历史记录 -->
+            <div class="chat-history-container" style="flex: 1; overflow-y: auto;">
+                <div class="chat-history-header">
+                    <i class="fas fa-history"></i>
+                    <span>对话历史</span>
+                    <span class="chat-count" id="chat-count">0</span>
+                </div>
+                <div id="chat-history" class="chat-history" style="display: flex; flex-direction: column-reverse;">
+                    <div class="chat-empty">
+                        <i class="fas fa-comments"></i>
+                        <p>还没有对话记录<br>开始提问吧！</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 当前回答显示区域 (隐藏或合并到历史记录中) -->
+            <div id="answer" class="response-box" style="display:none;"></div>
+
+            <!-- 问答输入区域 (放在最下方) -->
+            <div class="qa-input-area" style="border-top: 1px solid var(--border-color); padding-top: 16px;">
+                <div class="input-group">
+                    <label for="question" class="input-label">
+                        <i class="fas fa-question-circle"></i>
+                        请输入您的问题
+                    </label>
+                    <div class="input-wrapper">
+                        <input type="text" id="question" placeholder="例如：最近有什么竞赛可以参加？" class="input-field" autocomplete="off">
+
+                        <button onclick="askQuestion()" class="btn btn-primary" id="ask-btn">
+                            <i class="fas fa-paper-plane"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 右侧：每日新闻 (70%) -->
+        <section class="section report-section report-panel">
+            <div class="section-header">
+                <i class="fas fa-newspaper section-icon"></i>
+                <h2>每日新闻</h2>
+            </div>
+            <div class="options-group">
+                <div class="option-item">
+                    <label for="report-date" class="option-label">
+                        <i class="fas fa-calendar-alt"></i>
+                        选择日期
+                    </label>
+                    <select id="report-date" class="select-field history-select"></select>
+                </div>
+                <button onclick="getReport()" class="btn btn-secondary" id="report-btn">
+                    <i class="fas fa-eye"></i>
+                    <span>查看日报</span>
+                </button>
+                <button onclick="getWeeklyReport()" class="btn btn-primary" id="weekly-report-btn" style="margin-left: 8px;">
+                    <i class="fas fa-calendar-week"></i>
+                    <span>查看周报</span>
+                </button>
+            </div>
+            <div id="report" class="report-box"></div>
+        </section>
+    </div>
+
+    <!-- 页脚 -->
+    <footer class="footer">
+        <p>
+            <i class="fas fa-info-circle"></i>
+            智慧校园助手 v1.0.0 | 
+            <a href="/docs" target="_blank" class="footer-link">API 文档</a>
+        </p>
+    </footer>
+</div>
+
+<script src="main.js?v=2"></script>
+</body>
+</html>
