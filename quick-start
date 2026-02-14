@@ -1,0 +1,13 @@
+开两个终端
+
+第一个终端运行： python /root/NLP/main.py serve
+第二个终端运行： ./cloudflared-linux-amd64 tunnel --url http://localhost:8000
+
+
+第二个终端运行后，会有如下输出：
+2026-01-19T03:12:06Z INF +--------------------------------------------------------------------------------------------+
+2026-01-19T03:12:06Z INF |  Your quick Tunnel has been created! Visit it at (it may take some time to be reachable):  |
+2026-01-19T03:12:06Z INF |  https://able-rica-acres-childhood.trycloudflare.com                                       |
+2026-01-19T03:12:06Z INF +--------------------------------------------------------------------------------------------+
+
+得到的链接即为： https://able-rica-acres-childhood.trycloudflare.com  , 将其粘贴到浏览器中, 即可访问到NLP服务

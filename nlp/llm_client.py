@@ -8,6 +8,14 @@ from typing import Any, Dict, List, Optional
 import requests
 from tenacity import retry, wait_exponential_jitter, stop_after_attempt, retry_if_exception_type
 
+try:
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from peft import PeftModel
+    HAS_LOCAL_LIBS = True
+except ImportError:
+    HAS_LOCAL_LIBS = False
+
 from .config import get_settings
 
 
@@ -20,8 +28,12 @@ class LLMClient:
     一个简单的LLM客户端封装，支持：
     - DeepSeek（OpenAI兼容接口）
     - OpenAI（或其它OpenAI兼容服务）
+    - Local（本地微调后的 LoRA 模型）
     - Mock（无网络环境下用于快速开发/调试）
     """
+    
+    _local_model = None
+    _local_tokenizer = None
 
     def __init__(self, provider: Optional[str] = None, api_key: Optional[str] = None,
                  api_base: Optional[str] = None, model: Optional[str] = None,
@@ -50,6 +62,8 @@ class LLMClient:
             return self._chat_mock(messages)
         elif self.provider in ("deepseek", "openai"):
             return self._chat_openai_compatible(messages, temperature, max_tokens)
+        elif self.provider == "local":
+            return self._chat_local(messages, temperature, max_tokens)
         else:
             raise LLMError(f"Unsupported provider: {self.provider}")
 
@@ -76,6 +90,73 @@ class LLMClient:
             return data["choices"][0]["message"]["content"]
         except Exception as e:
             raise LLMError(f"Invalid response: {data}") from e
+
+    def _chat_local(self, messages: List[Dict[str, str]], temperature: float | None,
+                   max_tokens: Optional[int]) -> str:
+        if not HAS_LOCAL_LIBS:
+            raise LLMError("Local inference requested but dependencies (torch, transformers, peft) not installed.")
+        
+        settings = get_settings()
+        
+        # 加载模型和分词器 (仅加载一次)
+        if LLMClient._local_model is None:
+            print(f"正在加载本地微调模型...")
+            print(f"基座模型: {settings.local_model_path}")
+            print(f"LoRA 权重: {settings.local_lora_path}")
+            
+            try:
+                LLMClient._local_tokenizer = AutoTokenizer.from_pretrained(
+                    settings.local_model_path, 
+                    use_fast=False, 
+                    trust_remote_code=True
+                )
+                LLMClient._local_tokenizer.pad_token = LLMClient._local_tokenizer.eos_token
+                
+                base_model = AutoModelForCausalLM.from_pretrained(
+                    settings.local_model_path,
+                    device_map="auto",
+                    torch_dtype=torch.bfloat16,
+                    trust_remote_code=True
+                )
+                
+                LLMClient._local_model = PeftModel.from_pretrained(base_model, settings.local_lora_path)
+                LLMClient._local_model.eval()
+                print("本地模型加载成功！")
+            except Exception as e:
+                raise LLMError(f"加载本地模型失败: {str(e)}")
+
+        # 准备推理
+        tokenizer = LLMClient._local_tokenizer
+        model = LLMClient._local_model
+        
+        text = tokenizer.apply_chat_template(
+            messages, 
+            tokenize=False, 
+            add_generation_prompt=True
+        )
+        
+        model_inputs = tokenizer([text], return_tensors="pt").to(model.device)
+        
+        # 生成参数
+        gen_kwargs = {
+            "input_ids": model_inputs.input_ids,
+            "max_new_tokens": max_tokens or 1024,
+            "temperature": temperature if temperature is not None else settings.temperature,
+            "top_p": 0.9,
+            "do_sample": True if (temperature or settings.temperature) > 0 else False,
+            "eos_token_id": tokenizer.eos_token_id,
+        }
+        
+        with torch.no_grad():
+            generated_ids = model.generate(**gen_kwargs)
+            
+        # 截断输入部分
+        generated_ids = [
+            output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
+        ]
+        response = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
+        
+        return response
 
     def _chat_mock(self, messages: List[Dict[str, str]]) -> str:
         # 简单的可重复输出，方便调试无需外网
